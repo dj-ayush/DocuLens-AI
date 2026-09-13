@@ -79,7 +79,7 @@ Additional provider keys and all configurable limits are documented in `.env.exa
 Run the app:
 
 ```bash
-cd rag-bot-fastapi/server
+cd DocuLens-AI/server
 
 uvicorn main:app --reload
 ```
