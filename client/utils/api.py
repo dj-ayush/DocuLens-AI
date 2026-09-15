@@ -28,9 +28,9 @@ def upload_and_process_pdf(model_provider, uploaded_files) -> dict:
   files = []
   for file in uploaded_files:
     if hasattr(file, "data"):
-      files.append(("files", (file.name, BytesIO(file.data), file.type)))
+      files.append(("file", (file.name, BytesIO(file.data), file.type)))
     else:
-      files.append(("files", (file.name, file.read(), file.type)))
+      files.append(("file", (file.name, file.read(), file.type)))
 
   data = {
     "model_provider": model_provider

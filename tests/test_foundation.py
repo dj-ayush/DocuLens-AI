@@ -227,7 +227,7 @@ class ApiTests(unittest.TestCase):
     with patch("server.api.routes.upsert_vectorstore_from_pdfs", new=AsyncMock(return_value=result)):
       response = TestClient(app).post(
         "/upload_and_process_pdfs",
-        files={"files": ("one.pdf", pdf_bytes(1), "application/pdf")},
+        files={"file": ("one.pdf", pdf_bytes(1), "application/pdf")},
         data={"model_provider": "groq"},
       )
     self.assertEqual(response.status_code, 200)
@@ -237,7 +237,7 @@ class ApiTests(unittest.TestCase):
     with patch("server.api.routes.upsert_vectorstore_from_pdfs", new=AsyncMock(side_effect=ValueError("bad PDF"))):
       response = TestClient(app).post(
         "/upload_and_process_pdfs",
-        files={"files": ("one.pdf", b"bad", "application/pdf")},
+        files={"file": ("one.pdf", b"bad", "application/pdf")},
         data={"model_provider": "groq"},
       )
     self.assertEqual(response.status_code, 400)

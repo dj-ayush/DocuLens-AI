@@ -75,17 +75,11 @@ async def get_llm_models(model_provider: str):
     response_model=StandardAPIResponse,
 )
 async def upload_and_process_pdfs(
-    files: list[UploadFile] = File(...),
+    file: UploadFile = File(...),
     model_provider: str = Form(...),
 ):
     try:
         model_provider = model_provider.lower()
-
-        if len(files) != 1:
-            raise HTTPException(
-                status_code=400,
-                detail="Upload exactly one PDF.",
-            )
 
         if model_provider not in settings.model_options:
             raise HTTPException(
@@ -94,12 +88,12 @@ async def upload_and_process_pdfs(
             )
 
         logger.info(
-            f"Received {len(files)} files for model provider: "
+            f"Received file {file.filename} for model provider: "
             f"{model_provider}"
         )
 
         result = await upsert_vectorstore_from_pdfs(
-            files,
+            [file],
             model_provider,
         )
 
