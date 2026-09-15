@@ -9,8 +9,8 @@ from langchain_core.documents import Document
 from langchain_text_splitters import TokenTextSplitter
 from pypdf import PdfReader
 
-from config.settings import settings
-from utils.logger import logger
+from server.config.settings import settings
+from server.utils.logger import logger
 
 
 def _clean_page_text(text: str | None) -> str:

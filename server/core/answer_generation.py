@@ -3,8 +3,8 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from api.schemas import AnswerResponse, ConversationTurn, SourceCitation
-from core.llm_chain_factory import get_llm
+from server.api.schemas import AnswerResponse, ConversationTurn, SourceCitation
+from server.core.llm_chain_factory import get_llm
 
 
 STOP_WORDS = {

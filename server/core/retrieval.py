@@ -8,8 +8,8 @@ from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 from pydantic import ConfigDict
 
-from config.settings import settings
-from utils.logger import logger
+from server.config.settings import settings
+from server.utils.logger import logger
 
 
 TOKEN_PATTERN = re.compile(r"[\w]+(?:[-'][\w]+)*", re.UNICODE)

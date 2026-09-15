@@ -5,19 +5,19 @@ from typing import List
 from fastapi import UploadFile
 from langchain_core.documents import Document
 
-from config.settings import settings
-from core.document_processor import (
+from server.config.settings import settings
+from server.core.document_processor import (
   load_documents_from_paths,
   save_uploaded_file,
   split_documents_to_chunks,
 )
-from core.retrieval import DocumentKeywordIndex, HybridRetriever
+from server.core.retrieval import DocumentKeywordIndex, HybridRetriever
 
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
-from utils.logger import logger
+from server.utils.logger import logger
 
 
 _keyword_indexes: dict[str, DocumentKeywordIndex] = {}

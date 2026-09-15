@@ -1,9 +1,9 @@
-from config.settings import settings
+from server.config.settings import settings
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_groq import ChatGroq
 
-from utils.logger import logger
+from server.utils.logger import logger
 
 
 def _api_key_for_provider(model_provider: str) -> str | None:

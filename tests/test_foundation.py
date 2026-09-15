@@ -13,26 +13,25 @@ from pypdf import PdfWriter
 from starlette.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "server"))
 
-from api.routes import router  # noqa: E402
-from core.document_processor import (  # noqa: E402
+from server.api.routes import router  # noqa: E402
+from server.core.document_processor import (  # noqa: E402
   load_documents_from_paths,
   split_documents_to_chunks,
   validate_pdf,
 )
-from core import vector_database  # noqa: E402
+from server.core import vector_database  # noqa: E402
 from fastapi import FastAPI, UploadFile  # noqa: E402
 from langchain_core.documents import Document  # noqa: E402
-from main import app  # noqa: E402
-from core.retrieval import DocumentKeywordIndex, HybridRetriever  # noqa: E402
-from core.answer_generation import (  # noqa: E402
+from server.main import app  # noqa: E402
+from server.core.retrieval import DocumentKeywordIndex, HybridRetriever  # noqa: E402
+from server.core.answer_generation import (  # noqa: E402
   contextualize_question,
   generate_grounded_answer,
 )
-from api.schemas import AnswerResponse, ConversationTurn  # noqa: E402
-from core import llm_chain_factory  # noqa: E402
-from utils.logger import JsonFormatter  # noqa: E402
+from server.api.schemas import AnswerResponse, ConversationTurn  # noqa: E402
+from server.core import llm_chain_factory  # noqa: E402
+from server.utils.logger import JsonFormatter  # noqa: E402
 
 
 def pdf_bytes(page_count: int) -> bytes:
@@ -70,12 +69,12 @@ class PdfValidationTests(unittest.TestCase):
     self.assertEqual(result["page_count"], 301)
 
   def test_larger_document_within_configured_limit_is_accepted(self):
-    with patch("core.document_processor.settings.max_pdf_pages", 600):
+    with patch("server.core.document_processor.settings.max_pdf_pages", 600):
       result = validate_pdf(upload(pdf_bytes(500)))
     self.assertEqual(result["page_count"], 500)
 
   def test_document_above_configured_page_limit_is_rejected(self):
-    with patch("core.document_processor.settings.max_pdf_pages", 301):
+    with patch("server.core.document_processor.settings.max_pdf_pages", 301):
       with self.assertRaisesRegex(ValueError, "larger than the configured limit"):
         validate_pdf(upload(pdf_bytes(302)))
 
@@ -84,7 +83,7 @@ class PdfValidationTests(unittest.TestCase):
       validate_pdf(upload(b"not a PDF"))
 
   def test_oversized_pdf_is_rejected(self):
-    with patch("core.document_processor.settings.max_pdf_size_mb", 1):
+    with patch("server.core.document_processor.settings.max_pdf_size_mb", 1):
       with self.assertRaisesRegex(ValueError, "larger than the configured limit"):
         validate_pdf(upload(b"x" * (1024 * 1024 + 1)))
 
@@ -225,7 +224,7 @@ class ApiTests(unittest.TestCase):
       "status": "processed",
       "warnings": [],
     }
-    with patch("api.routes.upsert_vectorstore_from_pdfs", new=AsyncMock(return_value=result)):
+    with patch("server.api.routes.upsert_vectorstore_from_pdfs", new=AsyncMock(return_value=result)):
       response = TestClient(app).post(
         "/upload_and_process_pdfs",
         files={"files": ("one.pdf", pdf_bytes(1), "application/pdf")},
@@ -235,7 +234,7 @@ class ApiTests(unittest.TestCase):
     self.assertEqual(response.json()["data"], result)
 
   def test_failed_ingestion_response_hides_stack_trace(self):
-    with patch("api.routes.upsert_vectorstore_from_pdfs", new=AsyncMock(side_effect=ValueError("bad PDF"))):
+    with patch("server.api.routes.upsert_vectorstore_from_pdfs", new=AsyncMock(side_effect=ValueError("bad PDF"))):
       response = TestClient(app).post(
         "/upload_and_process_pdfs",
         files={"files": ("one.pdf", b"bad", "application/pdf")},
@@ -251,9 +250,9 @@ class ApiTests(unittest.TestCase):
     retrieval = {"grounded": True, "retrieved_chunks": [], "normalized_query": "policy"}
     answer = AnswerResponse(answer="The policy applies.", grounded=True, confidence="high", sources=[], retrieval=retrieval)
     fake_retriever = SimpleNamespace(retrieve=lambda query: retrieval)
-    with patch("api.routes.get_retriever", return_value=fake_retriever), \
-        patch("api.routes.contextualize_question", return_value="policy"), \
-        patch("api.routes.generate_grounded_answer", return_value=answer):
+    with patch("server.api.routes.get_retriever", return_value=fake_retriever), \
+        patch("server.api.routes.contextualize_question", return_value="policy"), \
+        patch("server.api.routes.generate_grounded_answer", return_value=answer):
       response = TestClient(app).post(
         "/chat",
         json={"model_provider": "groq", "model_name": "openai/gpt-oss-20b", "message": "What policy applies?"},
@@ -287,9 +286,9 @@ class ApiTests(unittest.TestCase):
     fake_llm = SimpleNamespace(
       invoke=lambda messages: SimpleNamespace(content="Refund policy allows refunds within 30 days.")
     )
-    with patch("api.routes.get_retriever", return_value=fake_retriever), \
-        patch("api.routes.contextualize_question", return_value="refund policy"), \
-        patch("core.answer_generation.get_llm", return_value=fake_llm):
+    with patch("server.api.routes.get_retriever", return_value=fake_retriever), \
+        patch("server.api.routes.contextualize_question", return_value="refund policy"), \
+        patch("server.core.answer_generation.get_llm", return_value=fake_llm):
       response = TestClient(app).post(
         "/chat",
         json={"model_provider": "groq", "model_name": "openai/gpt-oss-20b", "message": "What is the refund policy?"},
@@ -304,9 +303,9 @@ class ApiTests(unittest.TestCase):
   def test_chat_api_skips_llm_when_retrieval_has_insufficient_evidence(self):
     retrieval = {"grounded": False, "retrieved_chunks": [], "normalized_query": "weather forecast"}
     fake_retriever = SimpleNamespace(retrieve=lambda query: retrieval)
-    with patch("api.routes.get_retriever", return_value=fake_retriever), \
-        patch("api.routes.contextualize_question", return_value="weather forecast"), \
-        patch("core.answer_generation.get_llm", side_effect=AssertionError("LLM should not be called")):
+    with patch("server.api.routes.get_retriever", return_value=fake_retriever), \
+        patch("server.api.routes.contextualize_question", return_value="weather forecast"), \
+        patch("server.core.answer_generation.get_llm", side_effect=AssertionError("LLM should not be called")):
       response = TestClient(app).post(
         "/chat",
         json={"model_provider": "groq", "model_name": "openai/gpt-oss-20b", "message": "What is the weather?"},
@@ -370,7 +369,7 @@ class AnswerGenerationTests(unittest.TestCase):
 
   def mocked_llm(self, content):
     llm = SimpleNamespace(invoke=lambda messages: SimpleNamespace(content=content))
-    return patch("core.answer_generation.get_llm", return_value=llm)
+    return patch("server.core.answer_generation.get_llm", return_value=llm)
 
   def test_correct_answer_and_citation_metadata(self):
     with self.mocked_llm("Customers can request a refund within 30 days."):
@@ -386,7 +385,7 @@ class AnswerGenerationTests(unittest.TestCase):
     def invoke(messages):
       captured["prompt"] = " ".join(str(message.content) for message in messages)
       return SimpleNamespace(content="Customers can ask for their money back within 30 days.")
-    with patch("core.answer_generation.get_llm", return_value=SimpleNamespace(invoke=invoke)):
+    with patch("server.core.answer_generation.get_llm", return_value=SimpleNamespace(invoke=invoke)):
       result = generate_grounded_answer("groq", "openai/gpt-oss-20b", "Explain this simply.", self.retrieval)
     self.assertTrue(result.grounded)
     self.assertIn("Explain in simple words", captured["prompt"])
@@ -426,7 +425,7 @@ class AnswerGenerationTests(unittest.TestCase):
 
   def test_insufficient_retrieval_does_not_call_llm(self):
     retrieval = {"grounded": False, "retrieved_chunks": [], "normalized_query": "unknown"}
-    with patch("core.answer_generation.get_llm", side_effect=AssertionError("LLM should not be called")):
+    with patch("server.core.answer_generation.get_llm", side_effect=AssertionError("LLM should not be called")):
       result = generate_grounded_answer("groq", "openai/gpt-oss-20b", "Unknown question", retrieval)
     self.assertFalse(result.grounded)
     self.assertEqual(result.confidence, "low")
