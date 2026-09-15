@@ -1,4 +1,6 @@
 import io
+import json
+import logging
 import os
 import sys
 import tempfile
@@ -30,6 +32,7 @@ from core.answer_generation import (  # noqa: E402
 )
 from api.schemas import AnswerResponse, ConversationTurn  # noqa: E402
 from core import llm_chain_factory  # noqa: E402
+from utils.logger import JsonFormatter  # noqa: E402
 
 
 def pdf_bytes(page_count: int) -> bytes:
@@ -259,12 +262,91 @@ class ApiTests(unittest.TestCase):
     self.assertEqual(response.json()["data"]["confidence"], "high")
     self.assertIn("grounded", response.json()["data"])
 
+  def test_chat_api_generates_grounded_answer_with_backend_citations(self):
+    retrieval = {
+      "grounded": True,
+      "retrieved_chunks": [
+        {
+          "page_content": "Refund policy allows refunds within 30 days.",
+          "metadata": {
+            "document_id": "doc-1",
+            "document_name": "Policy.pdf",
+            "page_number": 3,
+            "page_start": 3,
+            "page_end": 3,
+            "chunk_id": "doc-1:1",
+          },
+          "score": 0.92,
+          "retrieval_method": "hybrid",
+        }
+      ],
+      "normalized_query": "refund policy",
+      "selected_context": "Refund policy allows refunds within 30 days.",
+    }
+    fake_retriever = SimpleNamespace(retrieve=lambda query: retrieval)
+    fake_llm = SimpleNamespace(
+      invoke=lambda messages: SimpleNamespace(content="Refund policy allows refunds within 30 days.")
+    )
+    with patch("api.routes.get_retriever", return_value=fake_retriever), \
+        patch("api.routes.contextualize_question", return_value="refund policy"), \
+        patch("core.answer_generation.get_llm", return_value=fake_llm):
+      response = TestClient(app).post(
+        "/chat",
+        json={"model_provider": "groq", "model_name": "openai/gpt-oss-20b", "message": "What is the refund policy?"},
+      )
+    data = response.json()["data"]
+    self.assertEqual(response.status_code, 200)
+    self.assertTrue(data["grounded"])
+    self.assertEqual(data["sources"][0]["document_name"], "Policy.pdf")
+    self.assertEqual(data["sources"][0]["page_number"], 3)
+    self.assertEqual(data["sources"][0]["chunk_id"], "doc-1:1")
+
+  def test_chat_api_skips_llm_when_retrieval_has_insufficient_evidence(self):
+    retrieval = {"grounded": False, "retrieved_chunks": [], "normalized_query": "weather forecast"}
+    fake_retriever = SimpleNamespace(retrieve=lambda query: retrieval)
+    with patch("api.routes.get_retriever", return_value=fake_retriever), \
+        patch("api.routes.contextualize_question", return_value="weather forecast"), \
+        patch("core.answer_generation.get_llm", side_effect=AssertionError("LLM should not be called")):
+      response = TestClient(app).post(
+        "/chat",
+        json={"model_provider": "groq", "model_name": "openai/gpt-oss-20b", "message": "What is the weather?"},
+      )
+    data = response.json()["data"]
+    self.assertEqual(response.status_code, 200)
+    self.assertFalse(data["grounded"])
+    self.assertEqual(data["sources"], [])
+
   def test_groq_factory_uses_backend_api_key(self):
     with patch.object(llm_chain_factory.settings, "groq_api_key", "server-key"), \
         patch.object(llm_chain_factory, "ChatGroq", return_value="groq-llm") as groq:
       result = llm_chain_factory.get_llm("groq", "openai/gpt-oss-20b")
     self.assertEqual(result, "groq-llm")
     groq.assert_called_once_with(model="openai/gpt-oss-20b", api_key="server-key")
+
+  def test_gemini_factory_uses_google_api_key(self):
+    with patch.object(llm_chain_factory.settings, "google_api_key", "google-key"), \
+        patch.object(llm_chain_factory, "ChatGoogleGenerativeAI", return_value="gemini-llm") as gemini:
+      result = llm_chain_factory.get_llm("gemini", "gemini-2.0-flash")
+    self.assertEqual(result, "gemini-llm")
+    gemini.assert_called_once_with(model="gemini-2.0-flash", api_key="google-key")
+
+  def test_provider_factory_rejects_missing_api_key(self):
+    with patch.object(llm_chain_factory.settings, "groq_api_key", None):
+      with self.assertRaisesRegex(ValueError, "API key is not configured"):
+        llm_chain_factory.get_llm("groq", "openai/gpt-oss-20b")
+
+
+class LoggingTests(unittest.TestCase):
+  def test_json_exception_logs_include_traceback(self):
+    formatter = JsonFormatter()
+    try:
+      raise RuntimeError("boom")
+    except RuntimeError:
+      record = logging.getLogger("test").makeRecord(
+        "test", logging.ERROR, __file__, 1, "failure", (), sys.exc_info()
+      )
+    payload = json.loads(formatter.format(record))
+    self.assertIn("RuntimeError: boom", payload["exception"])
 
 
 class AnswerGenerationTests(unittest.TestCase):

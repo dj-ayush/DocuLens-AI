@@ -4,12 +4,15 @@ import json
 
 class JsonFormatter(logging.Formatter):
   def format(self, record: logging.LogRecord) -> str:
-    return json.dumps({
+    payload = {
       "timestamp": self.formatTime(record, self.datefmt),
       "level": record.levelname,
       "logger": record.name,
       "message": record.getMessage(),
-    })
+    }
+    if record.exc_info:
+      payload["exception"] = self.formatException(record.exc_info)
+    return json.dumps(payload)
 
 def setup_logger(name="ragbot") -> logging.Logger:
   logger = logging.getLogger(name)
