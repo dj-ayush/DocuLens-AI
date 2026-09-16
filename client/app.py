@@ -22,9 +22,6 @@ def main():
 
   setup_session_state()
 
-  if st.session_state.get("chat_history"):
-    render_download_chat_history()
-
   with st.sidebar:
     with st.expander("⚙️ Configuration", expanded=True):
       model_provider, model = render_model_selector()
@@ -51,6 +48,8 @@ def main():
 
   if st.session_state.get("chat_history", []):
     render_chat_history()
+
+  render_download_chat_history()
 
   if is_chat_ready():
     render_user_input(model_provider, model)
