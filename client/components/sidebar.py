@@ -10,6 +10,7 @@ from utils.helpers import (
 
 
 def render_model_selector():
+  previous_provider = st.session_state.get("model_provider")
   model_provider = st.selectbox(
     "🔌 Model Provider",
     options=get_model_providers(),
@@ -17,6 +18,9 @@ def render_model_selector():
     placeholder="Select a model provider",
     key="model_provider"
   )
+
+  if model_provider and model_provider != previous_provider:
+    st.session_state["model"] = None
 
   model = st.selectbox(
     "🧠 Select a model",
@@ -101,7 +105,12 @@ def sidebar_utilities():
       st.rerun()
 
     if col2.button("↻ Replace"):
-      st.session_state.update(chat_ready=False, document_result=None, unsubmitted_files=False)
+      st.session_state.update(
+        chat_ready=False,
+        document_result=None,
+        unsubmitted_files=False,
+        chat_history=[],
+      )
       st.session_state.uploader_key += 1
       st.toast("Choose a replacement document.", icon="↻")
       st.rerun()

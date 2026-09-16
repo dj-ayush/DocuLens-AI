@@ -22,6 +22,18 @@ from server.utils.logger import logger
 router = APIRouter()
 
 
+def _value_error_to_http(error: ValueError) -> HTTPException:
+    message = str(error)
+    if "VectorStore not found" in message:
+        return HTTPException(
+            status_code=404,
+            detail="Upload a document before using this feature.",
+        )
+    if "API key is not configured" in message:
+        return HTTPException(status_code=503, detail=message)
+    return HTTPException(status_code=400, detail=message)
+
+
 @router.get("/health", response_model=StandardAPIResponse)
 def health_check():
     logger.debug("Health check requested")
@@ -202,10 +214,7 @@ async def get_vectorstore_search(
         raise
 
     except ValueError as e:
-        raise HTTPException(
-            status_code=400,
-            detail=str(e),
-        ) from e
+        raise _value_error_to_http(e) from e
 
     except Exception as e:
         logger.exception(
@@ -288,6 +297,9 @@ async def chat(request: ChatRequest):
 
     except HTTPException:
         raise
+
+    except ValueError as e:
+        raise _value_error_to_http(e) from e
 
     except Exception as e:
         logger.exception(

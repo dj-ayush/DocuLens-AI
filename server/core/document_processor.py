@@ -22,8 +22,16 @@ def _clean_page_text(text: str | None) -> str:
 
 def validate_pdf(file: UploadFile) -> dict[str, Any]:
   filename = file.filename or ""
+  if not filename.lower().endswith(".pdf"):
+    raise ValueError("Please upload a valid PDF.")
+
   content_type = (file.content_type or "").lower()
-  if content_type != settings.allowed_file_type or not filename.lower().endswith(".pdf"):
+  allowed_types = {
+    settings.allowed_file_type.lower(),
+    "application/octet-stream",
+    "binary/octet-stream",
+  }
+  if content_type and content_type not in allowed_types:
     raise ValueError("Please upload a valid PDF.")
 
   file.file.seek(0, os.SEEK_END)

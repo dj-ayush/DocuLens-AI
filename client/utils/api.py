@@ -25,12 +25,14 @@ def get_supported_models(model_provider) -> list[str]:
   return handle_response(response)
 
 def upload_and_process_pdf(model_provider, uploaded_files) -> dict:
-  files = []
-  for file in uploaded_files:
-    if hasattr(file, "data"):
-      files.append(("file", (file.name, BytesIO(file.data), file.type)))
-    else:
-      files.append(("file", (file.name, file.read(), file.type)))
+  if not uploaded_files:
+    raise Exception("No PDF file provided.")
+
+  file = uploaded_files[0]
+  if hasattr(file, "data"):
+    files = [("file", (file.name, BytesIO(file.data), file.type))]
+  else:
+    files = [("file", (file.name, file.read(), file.type))]
 
   data = {
     "model_provider": model_provider

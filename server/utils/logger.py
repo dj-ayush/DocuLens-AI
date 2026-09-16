@@ -14,18 +14,23 @@ class JsonFormatter(logging.Formatter):
       payload["exception"] = self.formatException(record.exc_info)
     return json.dumps(payload)
 
+
 def setup_logger(name="ragbot") -> logging.Logger:
+  from server.config.settings import settings
+
+  level = getattr(logging, settings.log_level.upper(), logging.INFO)
   logger = logging.getLogger(name)
-  logger.setLevel(logging.INFO)
+  logger.setLevel(level)
   logger.propagate = False
   formatter = JsonFormatter()
 
   if not logger.hasHandlers():
     ch = logging.StreamHandler()
-    ch.setLevel(logging.INFO)
+    ch.setLevel(level)
     ch.setFormatter(formatter)
     logger.addHandler(ch)
 
   return logger
+
 
 logger = setup_logger()

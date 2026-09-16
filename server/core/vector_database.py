@@ -1,5 +1,4 @@
 import os
-import shutil
 
 from typing import List
 from fastapi import UploadFile
@@ -7,9 +6,9 @@ from langchain_core.documents import Document
 
 from server.config.settings import settings
 from server.core.document_processor import (
-  load_documents_from_paths,
-  save_uploaded_file,
-  split_documents_to_chunks,
+    load_documents_from_paths,
+    save_uploaded_file,
+    split_documents_to_chunks,
 )
 from server.core.retrieval import DocumentKeywordIndex, HybridRetriever
 
@@ -21,108 +20,226 @@ from server.utils.logger import logger
 
 
 _keyword_indexes: dict[str, DocumentKeywordIndex] = {}
+_embeddings_cache: dict[str, object] = {}
+_vectorstores_cache: dict[str, Chroma] = {}
 
 
 def vectorstore_exists(persist_path: str) -> bool:
-  exists = os.path.exists(persist_path) and bool(os.listdir(persist_path))
-  logger.debug(f"Vectorstore exists at {persist_path}: {exists}")
-  return exists
+    exists = os.path.exists(persist_path) and bool(os.listdir(persist_path))
+    logger.debug(f"Vectorstore exists at {persist_path}: {exists}")
+    return exists
+
 
 def get_embeddings(model_provider: str):
-  logger.debug(f"Getting embeddings for provider: {model_provider}")
-  if model_provider == "groq":
-    return HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L12-v2")
-  elif model_provider == "gemini":
-    return GoogleGenerativeAIEmbeddings(
-      model="models/embedding-001",
-      google_api_key=settings.google_api_key
-    )
-  else:
-    logger.error(f"Unsupported LLM Provider: {model_provider}")
-    raise ValueError(f"Unsupported LLM Provider: {model_provider}")
+    logger.debug(f"Getting embeddings for provider: {model_provider}")
+
+    if model_provider in _embeddings_cache:
+        return _embeddings_cache[model_provider]
+
+    if model_provider == "groq":
+        embeddings = HuggingFaceEmbeddings(
+            model_name="sentence-transformers/all-MiniLM-L12-v2"
+        )
+    elif model_provider == "gemini":
+        embeddings = GoogleGenerativeAIEmbeddings(
+            model="models/embedding-001",
+            google_api_key=settings.google_api_key,
+        )
+    else:
+        logger.error(f"Unsupported LLM Provider: {model_provider}")
+        raise ValueError(f"Unsupported LLM Provider: {model_provider}")
+
+    _embeddings_cache[model_provider] = embeddings
+    return embeddings
+
+
+def invalidate_provider_cache(model_provider: str) -> None:
+    _vectorstores_cache.pop(model_provider, None)
+    _keyword_indexes.pop(model_provider, None)
+
 
 def initialize_empty_vectorstores():
-  logger.info("Initializing empty vectorstores...")
-  for provider in settings.model_options:
-    persist_path = settings.vectorstore_directories[provider]
-    os.makedirs(persist_path, exist_ok=True)
+    logger.info("Initializing empty vectorstores...")
 
-    logger.debug(f"Prepared vectorstore directory for {provider} at {persist_path}")
+    for provider in settings.model_options:
+        persist_path = settings.vectorstore_directories[provider]
+        os.makedirs(persist_path, exist_ok=True)
 
-  logger.info("Vectorstore initialization complete.")
+        logger.debug(
+            f"Prepared vectorstore directory for {provider} at {persist_path}"
+        )
 
-async def upsert_vectorstore_from_pdfs(uploaded_files: List[UploadFile], model_provider: str):
-  logger.debug(f"Upserting vectorstore for {model_provider}")
-  saved_document = await save_uploaded_file(uploaded_files)
-  docs, warnings = load_documents_from_paths(
-    [saved_document["file_path"]],
-    saved_document["document_id"],
-    saved_document["document_name"],
-  )
-  chunks = split_documents_to_chunks(
-    docs,
-    saved_document["document_id"],
-    saved_document["document_name"],
-  )
-  if not chunks:
-    raise ValueError(
-      "No extractable text was found in the PDF. Scanned documents require OCR."
-    )
-  embedding = get_embeddings(model_provider)
+    logger.info("Vectorstore initialization complete.")
 
-  persist_path = settings.vectorstore_directories[model_provider]
 
-  if os.path.exists(persist_path):
-    shutil.rmtree(persist_path)
-  vectorstore = Chroma.from_documents(
-    documents=chunks,
-    embedding=embedding,
-    persist_directory=str(persist_path),
-  )
-  _keyword_indexes[model_provider] = DocumentKeywordIndex(chunks, saved_document["document_id"])
-  logger.debug(f"Created document vectorstore with {len(chunks)} chunks.")
+async def upsert_vectorstore_from_pdfs(
+    uploaded_files: List[UploadFile],
+    model_provider: str,
+):
+    logger.debug(f"Upserting vectorstore for {model_provider}")
 
-  return {
-    "document_id": saved_document["document_id"],
-    "filename": saved_document["document_name"],
-    "page_count": saved_document["page_count"],
-    "chunk_count": len(chunks),
-    "status": "processed",
-    "warnings": warnings,
-  }
+    saved_document = await save_uploaded_file(uploaded_files)
+    file_path = saved_document["file_path"]
+
+    try:
+        docs, warnings = load_documents_from_paths(
+            [file_path],
+            saved_document["document_id"],
+            saved_document["document_name"],
+        )
+
+        chunks = split_documents_to_chunks(
+            docs,
+            saved_document["document_id"],
+            saved_document["document_name"],
+        )
+
+        if not chunks:
+            raise ValueError(
+                "No extractable text was found in the PDF. "
+                "Scanned documents require OCR."
+            )
+
+        embedding = get_embeddings(model_provider)
+        persist_path = settings.vectorstore_directories[model_provider]
+
+        # Remove the previous active vectorstore from the in-memory cache.
+        # Do NOT delete the Chroma directory with shutil.rmtree().
+        # Chroma/HNSW can keep files open on Windows, causing WinError 32.
+        old_vectorstore = _vectorstores_cache.get(model_provider)
+
+        if old_vectorstore is not None:
+            try:
+                old_vectorstore.delete_collection()
+                logger.debug(
+                    f"Deleted previous Chroma collection for provider: "
+                    f"{model_provider}"
+                )
+            except Exception as error:
+                logger.warning(
+                    f"Could not delete previous Chroma collection: {error}"
+                )
+
+        _vectorstores_cache.pop(model_provider, None)
+        _keyword_indexes.pop(model_provider, None)
+
+        os.makedirs(persist_path, exist_ok=True)
+
+        vectorstore = Chroma.from_documents(
+            documents=chunks,
+            embedding=embedding,
+            persist_directory=str(persist_path),
+        )
+
+        _vectorstores_cache[model_provider] = vectorstore
+
+        _keyword_indexes[model_provider] = DocumentKeywordIndex(
+            chunks,
+            saved_document["document_id"],
+        )
+
+        logger.debug(
+            f"Created document vectorstore with {len(chunks)} chunks."
+        )
+
+        return {
+            "document_id": saved_document["document_id"],
+            "filename": saved_document["document_name"],
+            "page_count": saved_document["page_count"],
+            "chunk_count": len(chunks),
+            "status": "processed",
+            "warnings": warnings,
+        }
+
+    finally:
+        try:
+            os.remove(file_path)
+        except OSError:
+            logger.warning(
+                f"Could not remove temporary upload file: {file_path}"
+            )
+
 
 def load_vectorstore(model_provider: str):
-  persist_path = settings.vectorstore_directories[model_provider]
-  logger.debug(f"Loading vectorstore from {persist_path}")
+    if model_provider in _vectorstores_cache:
+        return _vectorstores_cache[model_provider]
 
-  if vectorstore_exists(persist_path):
-    logger.debug(f"Loading existing vectorstore for provider: {model_provider}")
-    return Chroma(
-      persist_directory=str(persist_path),
-      embedding_function=get_embeddings(model_provider),
+    persist_path = settings.vectorstore_directories[model_provider]
+
+    logger.debug(f"Loading vectorstore from {persist_path}")
+
+    if vectorstore_exists(persist_path):
+        logger.debug(
+            f"Loading existing vectorstore for provider: {model_provider}"
+        )
+
+        vectorstore = Chroma(
+            persist_directory=str(persist_path),
+            embedding_function=get_embeddings(model_provider),
+        )
+
+        _vectorstores_cache[model_provider] = vectorstore
+
+        return vectorstore
+
+    logger.debug(
+        f"VectorStore not found for provider: {model_provider}"
     )
 
-  logger.debug(f"VectorStore not found for provider: {model_provider}")
-  raise ValueError(f"VectorStore not found for provider: {model_provider}")
+    raise ValueError(
+        f"VectorStore not found for provider: {model_provider}"
+    )
 
 
 def get_retriever(model_provider: str) -> HybridRetriever:
-  vectorstore = load_vectorstore(model_provider)
-  if model_provider not in _keyword_indexes:
-    stored = vectorstore.get(include=["documents", "metadatas"])
-    documents = [
-      Document(page_content=content, metadata=metadata or {})
-      for content, metadata in zip(stored.get("documents", []), stored.get("metadatas", []))
-    ]
-    document_id = documents[0].metadata.get("document_id") if documents else ""
-    _keyword_indexes[model_provider] = DocumentKeywordIndex(documents, document_id)
-  return HybridRetriever(vectorstore, _keyword_indexes[model_provider])
+    vectorstore = load_vectorstore(model_provider)
+
+    if model_provider not in _keyword_indexes:
+        stored = vectorstore.get(
+            include=["documents", "metadatas"]
+        )
+
+        documents = [
+            Document(
+                page_content=content,
+                metadata=metadata or {},
+            )
+            for content, metadata in zip(
+                stored.get("documents", []),
+                stored.get("metadatas", []),
+            )
+        ]
+
+        document_id = (
+            documents[0].metadata.get("document_id")
+            if documents
+            else ""
+        )
+
+        _keyword_indexes[model_provider] = DocumentKeywordIndex(
+            documents,
+            document_id,
+        )
+
+    return HybridRetriever(
+        vectorstore,
+        _keyword_indexes[model_provider],
+    )
+
 
 def get_collections_count(model_provider: str):
-  logger.debug(f"Getting collection count for provider: {model_provider}")
-  vectorstore = load_vectorstore(model_provider)
-  return vectorstore._collection.count()
+    logger.debug(
+        f"Getting collection count for provider: {model_provider}"
+    )
+
+    vectorstore = load_vectorstore(model_provider)
+
+    return vectorstore._collection.count()
+
 
 def find_similar_chunks(model_provider: str, query: str):
-  logger.debug(f"Searching for similar chunks for provider: {model_provider}")
-  return get_retriever(model_provider).retrieve(query)
+    logger.debug(
+        f"Searching for similar chunks for provider: {model_provider}"
+    )
+
+    return get_retriever(model_provider).retrieve(query)
