@@ -40,11 +40,13 @@ def get_embeddings(model_provider: str):
         embeddings = HuggingFaceEmbeddings(
             model_name="sentence-transformers/all-MiniLM-L12-v2"
         )
+
     elif model_provider == "gemini":
         embeddings = GoogleGenerativeAIEmbeddings(
-            model="models/embedding-001",
+            model="gemini-embedding-001",
             google_api_key=settings.google_api_key,
         )
+
     else:
         logger.error(f"Unsupported LLM Provider: {model_provider}")
         raise ValueError(f"Unsupported LLM Provider: {model_provider}")
@@ -104,8 +106,8 @@ async def upsert_vectorstore_from_pdfs(
         persist_path = settings.vectorstore_directories[model_provider]
 
         # Remove the previous active vectorstore from the in-memory cache.
-        # Do NOT delete the Chroma directory with shutil.rmtree().
-        # Chroma/HNSW can keep files open on Windows, causing WinError 32.
+        # Do not use shutil.rmtree() because Chroma/HNSW can keep
+        # files open on Windows and cause WinError 32.
         old_vectorstore = _vectorstores_cache.get(model_provider)
 
         if old_vectorstore is not None:
