@@ -107,7 +107,7 @@ class IngestionMetadataTests(unittest.TestCase):
       self.assertEqual(documents, [])
       self.assertIn("no extractable text", warnings[0])
 
-  def test_document_replacement_removes_old_vectors(self):
+  def test_document_replacement_keeps_directory_and_replaces_active_store(self):
     with tempfile.TemporaryDirectory() as directory:
       vector_path = Path(directory) / "vector"
       vector_path.mkdir()
@@ -124,13 +124,13 @@ class IngestionMetadataTests(unittest.TestCase):
           patch.object(vector_database, "load_documents_from_paths", return_value=([document], [])), \
           patch.object(vector_database, "split_documents_to_chunks", return_value=[document]), \
           patch.object(vector_database, "get_embeddings", return_value=object()), \
-          patch.object(vector_database.Chroma, "from_documents", return_value=fake_store), \
-          patch.object(vector_database.shutil, "rmtree") as remove_vectors:
+          patch.object(vector_database.Chroma, "from_documents", return_value=fake_store):
         import asyncio
         result = asyncio.run(vector_database.upsert_vectorstore_from_pdfs([upload(pdf_bytes(1))], "groq"))
-      remove_vectors.assert_called_once_with(vector_path)
       self.assertEqual(result["document_id"], "new-doc")
       self.assertEqual(result["status"], "processed")
+      self.assertTrue(vector_path.exists())
+      self.assertIs(vector_database._vectorstores_cache["groq"], fake_store)
 
   def test_active_keyword_index_is_replaced(self):
     old_documents = [Document(page_content="old policy", metadata={"chunk_id": "old", "document_id": "old-doc"})]

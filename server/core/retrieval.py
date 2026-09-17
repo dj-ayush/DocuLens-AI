@@ -157,6 +157,8 @@ class HybridRetriever(BaseRetriever):
     query: str,
   ) -> list[RetrievalEvidence]:
 
+    scores_are_distances = True
+
     try:
       # Use raw similarity/distance scores instead of
       # similarity_search_with_relevance_scores().
@@ -171,15 +173,23 @@ class HybridRetriever(BaseRetriever):
       )
 
     except (AttributeError, ValueError):
-      documents = self.vectorstore.similarity_search(
-        query,
-        k=settings.semantic_top_k,
-      )
+      try:
+        results = self.vectorstore.similarity_search_with_relevance_scores(
+          query,
+          k=settings.semantic_top_k,
+        )
+        scores_are_distances = False
 
-      results = [
-        (document, 0.0)
-        for document in documents
-      ]
+      except (AttributeError, ValueError):
+        documents = self.vectorstore.similarity_search(
+          query,
+          k=settings.semantic_top_k,
+        )
+
+        results = [
+          (document, 0.0)
+          for document in documents
+        ]
 
     evidence: list[RetrievalEvidence] = []
 
@@ -197,13 +207,16 @@ class HybridRetriever(BaseRetriever):
       except (TypeError, ValueError):
         distance = 1.0
 
-      # Chroma cosine distance is normally:
-      #
-      #   0.0 = identical
-      #   1.0 = unrelated
-      #
-      # Convert distance into a normalized similarity.
-      similarity = 1.0 - distance
+      if scores_are_distances:
+        # Chroma cosine distance is normally:
+        #
+        #   0.0 = identical
+        #   1.0 = unrelated
+        #
+        # Convert distance into a normalized similarity.
+        similarity = 1.0 - distance
+      else:
+        similarity = distance
 
       similarity = max(
         0.0,
