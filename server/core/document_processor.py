@@ -6,7 +6,6 @@ from uuid import uuid4
 
 from fastapi import UploadFile
 from langchain_core.documents import Document
-from langchain_text_splitters import TokenTextSplitter
 from pypdf import PdfReader
 
 from server.config.settings import settings
@@ -120,6 +119,8 @@ def split_documents_to_chunks(
   document_id: str,
   document_name: str,
 ) -> list[Document]:
+  from langchain_text_splitters import TokenTextSplitter
+
   text_splitter = TokenTextSplitter(chunk_size=500, chunk_overlap=50)
   chunks = text_splitter.split_documents(docs)
   for index, chunk in enumerate(chunks, start=1):

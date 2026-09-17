@@ -1,6 +1,6 @@
 import os
 
-from typing import List
+from typing import Any, List
 from fastapi import UploadFile
 from langchain_core.documents import Document
 
@@ -12,16 +12,26 @@ from server.core.document_processor import (
 )
 from server.core.retrieval import DocumentKeywordIndex, HybridRetriever
 
-from langchain_chroma import Chroma
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
-
 from server.utils.logger import logger
 
 
+class _LazyChroma:
+    def _load(self):
+        from langchain_chroma import Chroma as ChromaClass
+
+        return ChromaClass
+
+    def __call__(self, *args, **kwargs):
+        return self._load()(*args, **kwargs)
+
+    def from_documents(self, *args, **kwargs):
+        return self._load().from_documents(*args, **kwargs)
+
+
+Chroma = _LazyChroma()
 _keyword_indexes: dict[str, DocumentKeywordIndex] = {}
 _embeddings_cache: dict[str, object] = {}
-_vectorstores_cache: dict[str, Chroma] = {}
+_vectorstores_cache: dict[str, Any] = {}
 
 
 def vectorstore_exists(persist_path: str) -> bool:
@@ -37,11 +47,15 @@ def get_embeddings(model_provider: str):
         return _embeddings_cache[model_provider]
 
     if model_provider == "groq":
+        from langchain_huggingface import HuggingFaceEmbeddings
+
         embeddings = HuggingFaceEmbeddings(
             model_name="sentence-transformers/all-MiniLM-L12-v2"
         )
 
     elif model_provider == "gemini":
+        from langchain_google_genai import GoogleGenerativeAIEmbeddings
+
         embeddings = GoogleGenerativeAIEmbeddings(
             model="gemini-embedding-001",
             google_api_key=settings.google_api_key,

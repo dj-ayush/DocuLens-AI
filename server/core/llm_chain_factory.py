@@ -1,9 +1,26 @@
 from server.config.settings import settings
 
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_groq import ChatGroq
-
 from server.utils.logger import logger
+
+
+class _LazyProviderClass:
+  def __init__(self, module_name: str, class_name: str):
+    self.module_name = module_name
+    self.class_name = class_name
+
+  def _load(self):
+    module = __import__(self.module_name, fromlist=[self.class_name])
+    return getattr(module, self.class_name)
+
+  def __call__(self, *args, **kwargs):
+    return self._load()(*args, **kwargs)
+
+
+ChatGoogleGenerativeAI = _LazyProviderClass(
+  "langchain_google_genai",
+  "ChatGoogleGenerativeAI",
+)
+ChatGroq = _LazyProviderClass("langchain_groq", "ChatGroq")
 
 
 _llm_cache: dict[tuple[str, str], object] = {}
