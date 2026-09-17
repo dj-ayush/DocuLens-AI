@@ -29,6 +29,8 @@ class _LazyChroma:
 
 
 Chroma = _LazyChroma()
+GROQ_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L12-v2"
+GROQ_EMBEDDING_BATCH_SIZE = 4
 _keyword_indexes: dict[str, DocumentKeywordIndex] = {}
 _embeddings_cache: dict[str, object] = {}
 _vectorstores_cache: dict[str, Any] = {}
@@ -44,17 +46,28 @@ def get_embeddings(model_provider: str):
     logger.debug(f"Getting embeddings for provider: {model_provider}")
 
     if model_provider in _embeddings_cache:
+        logger.info(f"Using cached embeddings for provider: {model_provider}")
         return _embeddings_cache[model_provider]
 
     if model_provider == "groq":
         from langchain_huggingface import HuggingFaceEmbeddings
 
+        logger.info(
+            "Initializing HuggingFace embeddings "
+            f"model={GROQ_EMBEDDING_MODEL} "
+            f"batch_size={GROQ_EMBEDDING_BATCH_SIZE}"
+        )
+
         embeddings = HuggingFaceEmbeddings(
-            model_name="sentence-transformers/all-MiniLM-L12-v2"
+            model_name=GROQ_EMBEDDING_MODEL,
+            model_kwargs={"device": "cpu"},
+            encode_kwargs={"batch_size": GROQ_EMBEDDING_BATCH_SIZE},
         )
 
     elif model_provider == "gemini":
         from langchain_google_genai import GoogleGenerativeAIEmbeddings
+
+        logger.info("Initializing Gemini embeddings model=gemini-embedding-001")
 
         embeddings = GoogleGenerativeAIEmbeddings(
             model="gemini-embedding-001",
@@ -66,6 +79,7 @@ def get_embeddings(model_provider: str):
         raise ValueError(f"Unsupported LLM Provider: {model_provider}")
 
     _embeddings_cache[model_provider] = embeddings
+    logger.info(f"Embedding initialization complete for provider: {model_provider}")
     return embeddings
 
 
@@ -116,6 +130,14 @@ async def upsert_vectorstore_from_pdfs(
                 "Scanned documents require OCR."
             )
 
+        del docs
+
+        logger.info(
+            f"Preparing embeddings for provider={model_provider} "
+            f"document_id={saved_document['document_id']} "
+            f"chunks={len(chunks)}"
+        )
+
         embedding = get_embeddings(model_provider)
         persist_path = settings.vectorstore_directories[model_provider]
 
@@ -141,10 +163,21 @@ async def upsert_vectorstore_from_pdfs(
 
         os.makedirs(persist_path, exist_ok=True)
 
+        logger.info(
+            f"Creating Chroma vectorstore provider={model_provider} "
+            f"document_id={saved_document['document_id']} "
+            f"chunks={len(chunks)} persist_path={persist_path}"
+        )
+
         vectorstore = Chroma.from_documents(
             documents=chunks,
             embedding=embedding,
             persist_directory=str(persist_path),
+        )
+
+        logger.info(
+            f"Chroma vectorstore creation complete provider={model_provider} "
+            f"document_id={saved_document['document_id']} chunks={len(chunks)}"
         )
 
         _vectorstores_cache[model_provider] = vectorstore
