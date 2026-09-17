@@ -1,4 +1,7 @@
+import hashlib
+import math
 import os
+import re
 
 from typing import Any, List
 from fastapi import UploadFile
@@ -29,11 +32,48 @@ class _LazyChroma:
 
 
 Chroma = _LazyChroma()
-GROQ_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L12-v2"
-GROQ_EMBEDDING_BATCH_SIZE = 4
+PREVIOUS_GROQ_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L12-v2"
+GROQ_EMBEDDING_MODEL = "local-hashing-384"
+GROQ_EMBEDDING_DIMENSIONS = 384
+GEMINI_EMBEDDING_MODEL = "gemini-embedding-001"
 _keyword_indexes: dict[str, DocumentKeywordIndex] = {}
 _embeddings_cache: dict[str, object] = {}
 _vectorstores_cache: dict[str, Any] = {}
+
+
+class LocalHashEmbeddings:
+    def __init__(self, dimensions: int = GROQ_EMBEDDING_DIMENSIONS):
+        self.dimensions = dimensions
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [self._embed(text) for text in texts]
+
+    def embed_query(self, text: str) -> list[float]:
+        return self._embed(text)
+
+    def _embed(self, text: str) -> list[float]:
+        vector = [0.0] * self.dimensions
+        tokens = re.findall(r"[\w]+(?:[-'][\w]+)*", text.casefold())
+
+        for token in tokens:
+            digest = hashlib.blake2b(token.encode("utf-8"), digest_size=8).digest()
+            index = int.from_bytes(digest[:4], "big") % self.dimensions
+            sign = 1.0 if digest[4] & 1 else -1.0
+            vector[index] += sign
+
+        magnitude = math.sqrt(sum(value * value for value in vector))
+        if not magnitude:
+            return vector
+
+        return [value / magnitude for value in vector]
+
+
+def _collection_name(model_provider: str) -> str:
+    if model_provider == "groq":
+        return f"{model_provider}_{GROQ_EMBEDDING_MODEL.replace('-', '_')}"
+    if model_provider == "gemini":
+        return f"{model_provider}_{GEMINI_EMBEDDING_MODEL.replace('-', '_')}"
+    return model_provider
 
 
 def vectorstore_exists(persist_path: str) -> bool:
@@ -50,27 +90,22 @@ def get_embeddings(model_provider: str):
         return _embeddings_cache[model_provider]
 
     if model_provider == "groq":
-        from langchain_huggingface import HuggingFaceEmbeddings
-
         logger.info(
-            "Initializing HuggingFace embeddings "
+            "Initializing lightweight local embeddings "
             f"model={GROQ_EMBEDDING_MODEL} "
-            f"batch_size={GROQ_EMBEDDING_BATCH_SIZE}"
+            f"dimensions={GROQ_EMBEDDING_DIMENSIONS} "
+            f"replaces={PREVIOUS_GROQ_EMBEDDING_MODEL}"
         )
 
-        embeddings = HuggingFaceEmbeddings(
-            model_name=GROQ_EMBEDDING_MODEL,
-            model_kwargs={"device": "cpu"},
-            encode_kwargs={"batch_size": GROQ_EMBEDDING_BATCH_SIZE},
-        )
+        embeddings = LocalHashEmbeddings()
 
     elif model_provider == "gemini":
         from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
-        logger.info("Initializing Gemini embeddings model=gemini-embedding-001")
+        logger.info(f"Initializing Gemini embeddings model={GEMINI_EMBEDDING_MODEL}")
 
         embeddings = GoogleGenerativeAIEmbeddings(
-            model="gemini-embedding-001",
+            model=GEMINI_EMBEDDING_MODEL,
             google_api_key=settings.google_api_key,
         )
 
@@ -166,13 +201,15 @@ async def upsert_vectorstore_from_pdfs(
         logger.info(
             f"Creating Chroma vectorstore provider={model_provider} "
             f"document_id={saved_document['document_id']} "
-            f"chunks={len(chunks)} persist_path={persist_path}"
+            f"chunks={len(chunks)} persist_path={persist_path} "
+            f"collection={_collection_name(model_provider)}"
         )
 
         vectorstore = Chroma.from_documents(
             documents=chunks,
             embedding=embedding,
             persist_directory=str(persist_path),
+            collection_name=_collection_name(model_provider),
         )
 
         logger.info(
@@ -225,6 +262,7 @@ def load_vectorstore(model_provider: str):
         vectorstore = Chroma(
             persist_directory=str(persist_path),
             embedding_function=get_embeddings(model_provider),
+            collection_name=_collection_name(model_provider),
         )
 
         _vectorstores_cache[model_provider] = vectorstore
