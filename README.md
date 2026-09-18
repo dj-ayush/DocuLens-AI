@@ -1,3 +1,11 @@
+<p align="center">
+  <img src="assets/Banner.png" alt="DocuLens AI" width="100%">
+</p>
+
+<p align="center">
+  AI-powered PDF question answering with RAG, hybrid retrieval, and page-level citations.
+</p>
+
 # DocuLens AI
 
 Grounded document intelligence with hybrid retrieval and page-level citations.
