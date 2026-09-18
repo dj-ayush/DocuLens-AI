@@ -50,15 +50,16 @@ flowchart TD
     H --> J[ChromaDB: groq_local_hashing_384]
     I --> K[ChromaDB: gemini_gemini_embedding_001]
     F --> L[In-Memory Keyword Index]
-    J --> M[Semantic Retrieval]
+    J --> M[Hybrid Retrieval]
     K --> M
-    L --> N[Keyword Retrieval]
-    M --> O[Hybrid Scoring]
-    N --> O
-    O --> P[Relevant Chunks + Metadata]
-    P --> Q[Groq / Gemini LLM]
-    Q --> R[Grounding Validation]
-    R --> S[Backend-Owned Page Citations]
+    L --> M
+    M --> N[Semantic Retrieval]
+    M --> O[Keyword Retrieval]
+    N --> P[Hybrid Scoring]
+    O --> P
+    P --> Q[Relevant Context]
+    Q --> R[Groq / Gemini LLM]
+    R --> S[Grounded Answer + Page Citations]
     S --> T[React Chat Interface]
 ```
 
